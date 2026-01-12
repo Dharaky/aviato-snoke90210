@@ -329,6 +329,36 @@ export const AppProvider = ({ children }) => {
   // REVIEW RATING (1-5 Stars)
   const submitReview = useCallback(async (userId, rating) => {
     if (!currentUser) return;
+
+    // Optimistic Update
+    const tempReview = {
+        raterId: currentUser.id,
+        raterName: currentUser.name || "Anonymous",
+        raterProfilePic: currentUser.profilePic,
+        rating: rating,
+        timestamp: Date.now()
+    };
+
+    setUsers(prevUsers => prevUsers.map(u => {
+        if (u.id === userId) {
+            const currentReviews = u.reviews || [];
+            // Prevent duplicate optimistic updates if possible
+            if (currentReviews.some(r => r.raterId === currentUser.id)) return u;
+
+            const newCount = (u.reviewCount || 0) + 1;
+            const currentTotal = (u.reviewRating || 0) * (u.reviewCount || 0);
+            const newRating = (currentTotal + rating) / newCount;
+
+            return {
+                ...u,
+                reviews: [...currentReviews, tempReview],
+                reviewCount: newCount,
+                reviewRating: parseFloat(newRating.toFixed(1))
+            };
+        }
+        return u;
+    }));
+
     try {
         const review = {
             raterId: currentUser.id,
@@ -343,6 +373,7 @@ export const AppProvider = ({ children }) => {
     } catch (e) {
         console.error(e);
         showToast("Failed to submit review", "error");
+        await fetchData(); // Revert state
     }
   }, [currentUser, showToast]);
 
