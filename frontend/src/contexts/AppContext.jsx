@@ -210,7 +210,7 @@ export const AppProvider = ({ children }) => {
     if (!currentUser) return;
     try {
         // Optimistic Update for Conversations
-        const tempId = Date.now().toString();
+        const tempId = 'temp-' + Date.now().toString(); // Prefix temp ID
         
         // Check if this is the first message to handle Orange Mode counter optimistically
         const targetConversation = conversations.find(c => c.userId === userId);
@@ -241,39 +241,46 @@ export const AppProvider = ({ children }) => {
             });
         }
 
+        const optimisticMessage = {
+            id: tempId,
+            senderId: currentUser.id,
+            text,
+            timestamp: Date.now(),
+            read: false,
+            isOptimistic: true // Mark as optimistic
+        };
+
         setConversations(prev => {
             const updated = prev.map(c => {
                 if (c.userId === userId) {
                     return {
                         ...c,
-                        messages: [...c.messages, {
-                            id: tempId,
-                            senderId: currentUser.id,
-                            text,
-                            timestamp: Date.now(),
-                            read: false
-                        }],
+                        messages: [...c.messages, optimisticMessage],
                         lastMessage: text,
                         lastMessageTime: Date.now()
                     };
                 }
                 return c;
             });
+            // If new conversation (didn't exist in map)
+            const exists = prev.some(c => c.userId === userId);
+            if (!exists) {
+                 // We need to fetch basic info or mock it. 
+                 // For now, simpler to wait for backend or do a partial optimistic add if we had user object.
+                 // But typically startChat handles creation.
+            }
+            
             // Sort by lastMessageTime descending
             return updated.sort((a, b) => b.lastMessageTime - a.lastMessageTime);
         });
 
         await api.post(`/conversations/${userId}/messages`, { text });
         
-        // Slight delay to allow backend dynamic count to update in DB before refetching
-        setTimeout(() => {
-            fetchData();
-        }, 500);
+        // Fetch data but intelligently merge to avoid blinks
+        fetchData(true); 
+        
     } catch (e) {
         console.error(e);
-        // Revert users state if failed (e.g. 403 Blocked) to prevent "3/2" display
-        // Note: We can't easily use 'previousUsersState' here because it's inside the render cycle scope logic previously.
-        // Instead, we just trigger fetchData to reset state from backend truth.
         await fetchData(); 
         
         let msg = "Failed to send message";
@@ -286,6 +293,97 @@ export const AppProvider = ({ children }) => {
   
   // Receive message is now handled by polling fetchData, but we keep the function signature if needed
   const receiveMessage = () => {}; 
+
+  const fetchData = async (isAfterSend = false) => {
+    try {
+        const [usersRes, convRes] = await Promise.all([
+            api.get('/users'),
+            api.get('/conversations')
+        ]);
+        
+        setUsers(usersRes.data);
+        
+        if (isAfterSend) {
+            // Intelligent Merge: Preserve optimistic messages that aren't in server response yet
+            setConversations(prevConversations => {
+                const newConversations = convRes.data;
+                
+                return newConversations.map(serverConv => {
+                    const localConv = prevConversations.find(c => c.id === serverConv.id || c.userId === serverConv.userId);
+                    if (!localConv) return serverConv;
+                    
+                    const localMessages = localConv.messages || [];
+                    const serverMessages = serverConv.messages || [];
+                    
+                    // Find optimistic messages in local that are NOT in server (by text/timestamp match approx?)
+                    // Or simpler: Keep any message with 'isOptimistic: true' if we don't see a duplicate in server.
+                    
+                    const optimisticMessages = localMessages.filter(m => m.isOptimistic);
+                    
+                    // Filter out optimistic messages that have likely been confirmed (appear in server response)
+                    // We assume if we see a message with same text and close timestamp from same sender, it's the one.
+                    const trulyPending = optimisticMessages.filter(optMsg => {
+                        const match = serverMessages.find(srvMsg => 
+                            srvMsg.text === optMsg.text && 
+                            srvMsg.senderId === optMsg.senderId &&
+                            Math.abs(srvMsg.timestamp - optMsg.timestamp) < 2000 // 2s tolerance
+                        );
+                        return !match;
+                    });
+                    
+                    if (trulyPending.length > 0) {
+                        return {
+                            ...serverConv,
+                            messages: [...serverMessages, ...trulyPending],
+                            // Update last message preview if pending is newer
+                            lastMessage: trulyPending[trulyPending.length-1].text,
+                            lastMessageTime: trulyPending[trulyPending.length-1].timestamp
+                        };
+                    }
+                    
+                    return serverConv;
+                }).sort((a, b) => b.lastMessageTime - a.lastMessageTime);
+            });
+        } else {
+             // Standard Poll - also should preserve pending? 
+             // Yes, otherwise polling kills optimistic messages.
+             setConversations(prevConversations => {
+                const newConversations = convRes.data;
+                
+                return newConversations.map(serverConv => {
+                    const localConv = prevConversations.find(c => c.id === serverConv.id || c.userId === serverConv.userId);
+                    if (!localConv) return serverConv;
+                    
+                    const optimisticMessages = (localConv.messages || []).filter(m => m.isOptimistic);
+                     
+                    const trulyPending = optimisticMessages.filter(optMsg => {
+                        // Check if this optimistic message has "aged out" (e.g. > 10 seconds old and still not confirmed? maybe failed? remove it?)
+                        // For now, just keep it if not matched.
+                        const match = (serverConv.messages || []).find(srvMsg => 
+                            srvMsg.text === optMsg.text && 
+                            srvMsg.senderId === optMsg.senderId &&
+                            Math.abs(srvMsg.timestamp - optMsg.timestamp) < 5000 
+                        );
+                        return !match;
+                    });
+                    
+                    if (trulyPending.length > 0) {
+                         return {
+                            ...serverConv,
+                            messages: [...(serverConv.messages || []), ...trulyPending],
+                             lastMessage: trulyPending[trulyPending.length-1].text,
+                            lastMessageTime: trulyPending[trulyPending.length-1].timestamp
+                        };
+                    }
+                    return serverConv;
+                }).sort((a, b) => b.lastMessageTime - a.lastMessageTime);
+             });
+        }
+        
+    } catch (e) {
+        console.error("Failed to fetch data", e);
+    }
+  }; 
   
   const markConversationRated = (userId, isGood, reason = null) => {
       // Handled via rateConversation API
