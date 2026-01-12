@@ -73,7 +73,7 @@ const RatingModal = ({
     );
   }
 
-  // --- REVIEW MODE (Stars) ---
+    // --- REVIEW MODE (Stars) ---
   if (type === 'review') {
     return (
         <div 
@@ -82,7 +82,13 @@ const RatingModal = ({
             if (e.target === e.currentTarget) onClose();
           }}
         >
-          <div className="bg-white rounded-xl max-w-sm w-full p-6 animate-in fade-in zoom-in duration-200 shadow-xl">
+          <div className="bg-white rounded-xl max-w-sm w-full p-6 animate-in fade-in zoom-in duration-200 shadow-xl relative">
+            <button
+              onClick={onClose}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"
+            >
+              <X className="w-5 h-5" />
+            </button>
             <div className="text-center mb-6">
               <h2 className="text-xl font-bold text-gray-900 mb-2">{title || `Rate ${userName}`}</h2>
               <p className="text-sm text-gray-500">
@@ -99,7 +105,11 @@ const RatingModal = ({
                   className="transition-transform hover:scale-110 focus:outline-none"
                   onMouseEnter={() => setHoveredStar(star)}
                   onMouseLeave={() => setHoveredStar(0)}
-                  onClick={() => setRating(star)}
+                  onClick={() => {
+                    setRating(star);
+                    onRate(star);
+                    setShowSuccess(true);
+                  }}
                 >
                   <Star 
                     className={`w-10 h-10 transition-colors duration-200 ${
@@ -112,44 +122,15 @@ const RatingModal = ({
               ))}
             </div>
     
-            <div className="text-center h-6 mb-6">
+            <div className="text-center h-6 mb-2">
               <span className="text-sm font-medium text-gray-600">
                 {hoveredStar === 1 && "Terrible"}
                 {hoveredStar === 2 && "Bad"}
                 {hoveredStar === 3 && "Okay"}
                 {hoveredStar === 4 && "Good"}
                 {hoveredStar === 5 && "Excellent!"}
-                {!hoveredStar && rating > 0 && (
-                    <>
-                        {rating === 1 && "Terrible"}
-                        {rating === 2 && "Bad"}
-                        {rating === 3 && "Okay"}
-                        {rating === 4 && "Good"}
-                        {rating === 5 && "Excellent!"}
-                    </>
-                )}
-                {!hoveredStar && rating === 0 && "Tap a star to rate"}
+                {!hoveredStar && "Tap a star to rate"}
               </span>
-            </div>
-    
-            <div className="flex gap-3">
-                <Button 
-                    variant="ghost" 
-                    className="flex-1 text-gray-500 hover:text-gray-700"
-                    onClick={onClose}
-                >
-                    Cancel
-                </Button>
-                <Button 
-                    className={`flex-1 ${rating > 0 ? 'bg-mode-blue text-white' : 'bg-gray-100 text-gray-400'}`}
-                    disabled={rating === 0}
-                    onClick={() => {
-                        onRate(rating);
-                        setShowSuccess(true);
-                    }}
-                >
-                    Submit
-                </Button>
             </div>
           </div>
         </div>
