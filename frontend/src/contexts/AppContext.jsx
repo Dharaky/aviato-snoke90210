@@ -336,7 +336,6 @@ export const AppProvider = ({ children }) => {
   // Receive message is now handled by polling fetchData, but we keep the function signature if needed
   const receiveMessage = () => {}; 
 
-  
   const markConversationRated = (userId, isGood, reason = null) => {
       // Handled via rateConversation API
   };
