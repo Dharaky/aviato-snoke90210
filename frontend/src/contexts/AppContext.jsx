@@ -71,14 +71,56 @@ export const AppProvider = ({ children }) => {
     initAuth();
   }, []);
 
-  const fetchData = async () => {
+  const fetchData = async (isAfterSend = false) => {
     try {
         const [usersRes, convRes] = await Promise.all([
             api.get('/users'),
             api.get('/conversations')
         ]);
+        
         setUsers(usersRes.data);
-        setConversations(convRes.data);
+        
+        // Intelligent Merge: Preserve optimistic messages that aren't in server response yet
+        setConversations(prevConversations => {
+            const newConversations = convRes.data;
+            
+            return newConversations.map(serverConv => {
+                const localConv = prevConversations.find(c => c.id === serverConv.id || c.userId === serverConv.userId);
+                if (!localConv) return serverConv;
+                
+                const localMessages = localConv.messages || [];
+                const serverMessages = serverConv.messages || [];
+                
+                // Find optimistic messages in local that are NOT in server (by text/timestamp match approx?)
+                // Or simpler: Keep any message with 'isOptimistic: true' if we don't see a duplicate in server.
+                
+                const optimisticMessages = localMessages.filter(m => m.isOptimistic);
+                
+                // Filter out optimistic messages that have likely been confirmed (appear in server response)
+                // We assume if we see a message with same text and close timestamp from same sender, it's the one.
+                const trulyPending = optimisticMessages.filter(optMsg => {
+                    const match = serverMessages.find(srvMsg => 
+                        srvMsg.text === optMsg.text && 
+                        srvMsg.senderId === optMsg.senderId &&
+                        Math.abs(srvMsg.timestamp - optMsg.timestamp) < 5000 // 5s tolerance
+                    );
+                    return !match;
+                });
+                
+                if (trulyPending.length > 0) {
+                    return {
+                        ...serverConv,
+                        messages: [...serverMessages, ...trulyPending],
+                        // Update last message preview if pending is newer
+                        lastMessage: trulyPending[trulyPending.length-1].text,
+                        lastMessageTime: trulyPending[trulyPending.length-1].timestamp
+                    };
+                }
+                
+                return serverConv;
+            }).sort((a, b) => b.lastMessageTime - a.lastMessageTime);
+        });
+
     } catch (e) {
         console.error("Failed to fetch data", e);
     }
